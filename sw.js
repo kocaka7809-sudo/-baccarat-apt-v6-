@@ -1,14 +1,14 @@
-// Baccarat APT v6 — Service Worker
-const CACHE = 'baccarat-apt-v6-cache-v1';
-const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-];
+// Baccarat APT v6 — Service Worker v2
+const CACHE = 'baccarat-v6-v2';
+const BASE  = '/-baccarat-apt-v6-/';
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(ASSETS))
+    caches.open(CACHE).then(c => c.addAll([
+      BASE,
+      BASE + 'index.html',
+      BASE + 'manifest.json',
+    ]).catch(() => {}))
   );
   self.skipWaiting();
 });
@@ -25,19 +25,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   e.respondWith(
     caches.match(e.request).then(r => r || fetch(e.request).catch(() =>
-      caches.match('/index.html')
+      caches.match(BASE + 'index.html')
     ))
-  );
-});
-
-// Push notifications
-self.addEventListener('push', e => {
-  const data = e.data ? e.data.json() : {title:'Baccarat APT v6', body:'Нов сигнал!'};
-  e.waitUntil(
-    self.registration.showNotification(data.title || 'Baccarat APT v6', {
-      body: data.body || '',
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
-    })
   );
 });

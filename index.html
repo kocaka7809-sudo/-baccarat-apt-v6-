@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="bg">
 <head>
+<link rel="manifest" href="https://kocaka7809-sudo.github.io/-baccarat-apt-v6-/manifest.json" crossorigin="use-credentials">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
 <title>Baccarat APT v6 — Remaining Hands Calculator</title>
@@ -273,7 +274,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 <script>
 if('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js')
+    navigator.serviceWorker.register('./sw.js', {scope: './'})
       .then(r => console.log('SW registered:', r.scope))
       .catch(e => console.log('SW error:', e));
   });

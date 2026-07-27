@@ -1,9 +1,9 @@
 {
   "name": "Baccarat APT v6 - Statistical Analyzer",
   "short_name": "Baccarat APT",
-  "description": "Professional baccarat statistical analyzer with AI prediction, WT8 card counting, pattern recognition and bankroll management.",
-  "start_url": "/",
-  "scope": "/",
+  "description": "Professional baccarat statistical analyzer with AI prediction, WT8 card counting, 22 patterns, EV calculator and bankroll management.",
+  "start_url": "/-baccarat-apt-v6-/",
+  "scope": "/-baccarat-apt-v6-/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#060b14",
@@ -15,36 +15,16 @@
   ],
   "icons": [
     {
-      "src": "icon-192.png",
+      "src": "https://raw.githubusercontent.com/kocaka7809-sudo/-baccarat-apt-v6-/main/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "icon-512.png",
+      "src": "https://raw.githubusercontent.com/kocaka7809-sudo/-baccarat-apt-v6-/main/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
-    }
-  ],
-  "shortcuts": [
-    {
-      "name": "Нова обувка",
-      "url": "/?new=1",
-      "description": "Нулирай обувката"
-    },
-    {
-      "name": "WT8 Броач",
-      "url": "/?tab=wt8",
-      "description": "WT8 card counting"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "screenshot1.png",
-      "sizes": "1080x1920",
-      "type": "image/png",
-      "form_factor": "narrow"
     }
   ]
 }

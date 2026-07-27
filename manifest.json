@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Baccarat APT v6 - Statistical Analyzer",
   "short_name": "Baccarat APT",
-  "description": "Professional baccarat statistical analyzer with AI prediction, WT8 card counting, 22 patterns and bankroll management.",
+  "description": "Professional baccarat statistical analyzer with AI, WT8 card counting, 22 patterns and bankroll management.",
   "start_url": "https://kocaka7809-sudo.github.io/-baccarat-apt-v6-/",
   "scope": "https://kocaka7809-sudo.github.io/-baccarat-apt-v6-/",
   "display": "standalone",
@@ -35,7 +35,7 @@
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Baccarat APT v6 main screen"
+      "label": "Baccarat APT v6"
     }
   ]
 }

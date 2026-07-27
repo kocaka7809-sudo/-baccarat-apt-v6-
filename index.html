@@ -269,6 +269,16 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 .lc-chip{padding:3px 8px;border-radius:12px;font-size:12px;font-weight:700;
          background:var(--bg3);border:1px solid var(--border);color:var(--text)}
 </style>
+
+<script>
+if('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(r => console.log('SW registered:', r.scope))
+      .catch(e => console.log('SW error:', e));
+  });
+}
+</script>
 </head>
 <body>
 

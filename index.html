@@ -273,7 +273,7 @@ body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,san
 <script>
 if('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
+    navigator.serviceWorker.register('./sw.js')
       .then(r => console.log('SW registered:', r.scope))
       .catch(e => console.log('SW error:', e));
   });
@@ -1314,10 +1314,7 @@ renderAll();
       sizes: "any", type: "image/svg+xml"
     }]
   };
-  const blob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
-  const url  = URL.createObjectURL(blob);
-  const mEl  = document.getElementById('pwa-manifest');
-  if(mEl) mEl.href = url;
+  // Manifest is now static - manifest.json
 
   } catch(e) { console.warn('PWA manifest error:', e); }
 

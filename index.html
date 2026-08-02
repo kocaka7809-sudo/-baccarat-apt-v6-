@@ -342,7 +342,10 @@ async function analyzeOCR() {
   status.textContent   = '🤖 Claude анализира снимката...';
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    // CORS proxy needed for browser → Anthropic API calls
+    const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+    const PROXY_URL = 'https://corsproxy.io/?' + encodeURIComponent(ANTHROPIC_URL);
+    const response = await fetch(PROXY_URL, {
       method: 'POST',
       headers: {'Content-Type':'application/json','x-api-key': apiKey,'anthropic-version':'2023-06-01'},
       body: JSON.stringify({
@@ -5105,7 +5108,9 @@ ${pred&&pred.ready?`${pred.side} (${pred.conf}%, Gate: ${pred.gate})`:'Нужн�
     this.renderChat();
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const AI_URL = 'https://api.anthropic.com/v1/messages';
+      const AI_PROXY = 'https://corsproxy.io/?' + encodeURIComponent(AI_URL);
+      const response = await fetch(AI_PROXY, {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({

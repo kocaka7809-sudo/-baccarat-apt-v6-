@@ -289,10 +289,18 @@ let ocrResults     = [];
 function renderOCR() {
   const el = document.getElementById('ocr-api-key');
   if(!el) return;
+  // Try to restore from any storage
   try {
-    const saved = localStorage.getItem('anthropic_api_key');
-    if(saved) el.value = '••••••••••••';
+    const k = localStorage.getItem('bac_api_key') || sessionStorage.getItem('bac_api_key');
+    if(k && k.startsWith('sk-')) {
+      _cachedApiKey = k;
+      el.placeholder = '✅ Ключът е запазен — готов за OCR!';
+      el.value = '';
+    }
   } catch(e){}
+  if(_cachedApiKey) {
+    el.placeholder = '✅ Ключът е запазен — готов за OCR!';
+  }
 }
 
 function handleOCRImage(event) {
@@ -333,7 +341,7 @@ async function analyzeOCR() {
   if(!ocrImageBase64) { toast('Избери снимка първо!','#7f1d1d'); return; }
   const apiKey = getOCRKey();
   if(!apiKey) {
-    toast('❌ Въведи Anthropic API ключ!','#7f1d1d');
+    toast('❌ Въведи API ключа и натисни Запази!','#7f1d1d');
     document.getElementById('ocr-api-key')?.focus();
     return;
   }

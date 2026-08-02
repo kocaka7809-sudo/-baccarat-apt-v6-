@@ -368,14 +368,24 @@ async function analyzeOCR() {
             },
             {
               type: 'text',
-              text: `Анализирай тази снимка на Baccarat Bead Plate.
-Разпознай всички резултати в реда в който се появяват (ляво→дясно, горе→долу).
-Всеки резултат е: P (Player/Играч - зелен), B (Banker/Банкер - червен/син), T (Tie/Равно - зелен малък).
+              text: `Look at this Baccarat game screenshot. Find the results sequence.
 
-Върни САМО последователността като букви разделени с интервал.
-Пример: B B P B P P T B B P
+The results can appear as:
+- Colored circles in a grid (Bead Plate): Red/dark circles = Banker(B), Blue/green circles = Player(P), small green = Tie(T)
+- Text labels: "B", "P", "T" or "Banker", "Player", "Tie"  
+- Stats bar showing like "#46 P:18 B:23 T:5" - this means 18 Player wins, 23 Banker wins, 5 Ties total
+- Road map circles with letters inside
 
-Не добавяй обяснения, само буквите!`
+TASK: Extract the sequence of results in chronological order (oldest first).
+
+If you see stats like "P 18 B 23 T 5" → generate approximate sequence based on counts.
+If you see actual bead plate circles → read them left to right, top to bottom.
+If you see the last few results shown → return those.
+
+Return ONLY letters separated by spaces. Use ONLY: P B T
+Example output: B B B B P P B P B T B
+
+DO NOT explain. DO NOT add any other text. ONLY letters.`
             }
           ]
         }]
@@ -847,6 +857,21 @@ function renderAdvStats() {
       </div>
     </div>
   `;
+}
+
+
+function parseManualOCR() {
+  const inp = document.getElementById('ocr-manual');
+  if(!inp) return;
+  const text = inp.value.trim().toUpperCase();
+  const parsed = text.split(/[\s,]+/).filter(r => ['P','B','T'].includes(r));
+  if(parsed.length < 2) { toast('Въведи поне 2 резултата (P/B/T)','#7f1d1d'); return; }
+  ocrResults = parsed;
+  const chips = document.getElementById('ocr-chips');
+  chips.innerHTML = parsed.map(r => `<span class="hc ${r}">${r}</span>`).join('');
+  document.getElementById('ocr-note').innerHTML =
+    `Ръчно въведени: <strong style="color:var(--gold)">${parsed.length} ръце</strong>`;
+  toast(`✅ ${parsed.length} резултата готови за зареждане!`,'#166534');
 }
 
 </script>

@@ -279,6 +279,565 @@ if('serviceWorker' in navigator) {
       .catch(e => console.log('SW error:', e));
   });
 }
+
+// ════════════════════════════════════════════════════════════
+// OCR — Claude Vision анализира снимка на Bead Plate
+// ════════════════════════════════════════════════════════════
+let ocrImageBase64 = null;
+let ocrResults     = [];
+
+function renderOCR() {
+  const el = document.getElementById('ocr-api-key');
+  if(!el) return;
+  try {
+    const saved = localStorage.getItem('anthropic_api_key');
+    if(saved) el.value = '••••••••••••';
+  } catch(e){}
+}
+
+function handleOCRImage(event) {
+  const file = event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    ocrImageBase64 = e.target.result.split(',')[1];
+    const img = document.getElementById('ocr-img');
+    if(img) img.src = e.target.result;
+    const preview = document.getElementById('ocr-preview');
+    if(preview) preview.style.display = 'block';
+    document.getElementById('ocr-results').style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function saveOCRKey() {
+  const keyEl = document.getElementById('ocr-api-key');
+  const key = keyEl?.value?.trim();
+  if(key && key.startsWith('sk-')) {
+    try { localStorage.setItem('anthropic_api_key', key); } catch(e){}
+    toast('✅ API ключът е запазен!','#166534');
+    if(keyEl) keyEl.value = '••••••••••••';
+  } else {
+    toast('❌ Невалиден ключ — трябва да започва с sk-ant-','#7f1d1d');
+  }
+}
+
+function getOCRKey() {
+  const el = document.getElementById('ocr-api-key');
+  const val = el?.value?.trim();
+  if(val && !val.startsWith('•')) return val;
+  try { return localStorage.getItem('anthropic_api_key') || ''; } catch(e){ return ''; }
+}
+
+async function analyzeOCR() {
+  if(!ocrImageBase64) { toast('Избери снимка първо!','#7f1d1d'); return; }
+  const apiKey = getOCRKey();
+  if(!apiKey) {
+    toast('❌ Въведи Anthropic API ключ!','#7f1d1d');
+    document.getElementById('ocr-api-key')?.focus();
+    return;
+  }
+  const status = document.getElementById('ocr-status');
+  status.style.display = 'block';
+  status.textContent   = '🤖 Claude анализира снимката...';
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json','x-api-key': apiKey,'anthropic-version':'2023-06-01'},
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 500,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {type:'base64', media_type:'image/jpeg', data: ocrImageBase64}
+            },
+            {
+              type: 'text',
+              text: `Анализирай тази снимка на Baccarat Bead Plate.
+Разпознай всички резултати в реда в който се появяват (ляво→дясно, горе→долу).
+Всеки резултат е: P (Player/Играч - зелен), B (Banker/Банкер - червен/син), T (Tie/Равно - зелен малък).
+
+Върни САМО последователността като букви разделени с интервал.
+Пример: B B P B P P T B B P
+
+Не добавяй обяснения, само буквите!`
+            }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    const text = data.content?.[0]?.text?.trim() || '';
+
+    // Parse results
+    const parsed = text.toUpperCase().split(/[\s,]+/).filter(r => ['P','B','T'].includes(r));
+
+    if(parsed.length < 3) {
+      status.textContent = '⚠️ Не успях да разпозная резултати. Опитай с по-ясна снимка.';
+      return;
+    }
+
+    ocrResults = parsed;
+    status.style.display = 'none';
+
+    // Show results
+    const chips = document.getElementById('ocr-chips');
+    chips.innerHTML = parsed.map(r =>
+      `<span class="hc ${r}">${r}</span>`
+    ).join('');
+
+    document.getElementById('ocr-note').innerHTML =
+      `Разпознати: <strong style="color:var(--gold)">${parsed.length} ръце</strong> · ` +
+      `P:${parsed.filter(x=>x==='P').length} B:${parsed.filter(x=>x==='B').length} T:${parsed.filter(x=>x==='T').length}<br>` +
+      `Провери резултатите и натисни "Зареди" ако са верни.`;
+
+    document.getElementById('ocr-results').style.display = 'block';
+    toast(`📸 Разпознати ${parsed.length} ръце!`, '#166534');
+
+  } catch(e) {
+    status.textContent = '❌ Грешка: ' + e.message;
+  }
+}
+
+function loadOCRResults() {
+  if(!ocrResults.length) return;
+  doReset();
+  ocrResults.forEach(r => {
+    history.push(r);
+    if(prevR){if(!markovT[prevR])markovT[prevR]={P:0,B:0,T:0};markovT[prevR][r]=(markovT[prevR][r]||0)+1;}
+    prevR=r;
+  });
+  runCalibration();
+  renderAll();
+  toast(`✅ ${ocrResults.length} ръце заредени от OCR!`, '#166534');
+  clearOCR();
+}
+
+function clearOCR() {
+  ocrImageBase64 = null;
+  ocrResults     = [];
+  document.getElementById('ocr-preview').style.display = 'none';
+  document.getElementById('ocr-results').style.display = 'none';
+  document.getElementById('ocr-status').style.display  = 'none';
+}
+
+// ════════════════════════════════════════════════════════════
+// CLOUD SYNC — GitHub Gist
+// ════════════════════════════════════════════════════════════
+const CLOUD = {
+  token:  localStorage.getItem('cloud_token')  || '',
+  gistId: localStorage.getItem('cloud_gist_id')|| '',
+  lastSync: null,
+};
+
+function renderCloud() {
+  const tokenEl  = document.getElementById('cloud-token');
+  const gistEl   = document.getElementById('cloud-gist-id');
+  if(tokenEl)  tokenEl.value  = CLOUD.token  ? '••••••••••••' : '';
+  if(gistEl)   gistEl.value   = CLOUD.gistId || '';
+  updateCloudStatus('Готов за синхронизация', 'var(--dim)');
+  updateCloudInfo();
+}
+
+function saveCloudSettings() {
+  const tokenEl = document.getElementById('cloud-token');
+  const gistEl  = document.getElementById('cloud-gist-id');
+  const token = tokenEl?.value?.trim();
+  const gistId = gistEl?.value?.trim();
+  if(token && !token.startsWith('•')) {
+    CLOUD.token = token;
+    try { localStorage.setItem('cloud_token', token); } catch(e){}
+  }
+  if(gistId !== undefined) {
+    CLOUD.gistId = gistId;
+    try { localStorage.setItem('cloud_gist_id', gistId); } catch(e){}
+  }
+  toast('✅ Настройките са запазени', '#166534');
+  renderCloud();
+}
+
+function updateCloudStatus(msg, color) {
+  const el = document.getElementById('cloud-status');
+  if(el) { el.textContent = msg; el.style.color = color; }
+}
+
+function updateCloudInfo() {
+  const el = document.getElementById('cloud-info');
+  if(!el) return;
+  el.innerHTML = CLOUD.gistId
+    ? `Gist ID: <a href="https://gist.github.com/${CLOUD.gistId}" target="_blank"
+         style="color:var(--B)">${CLOUD.gistId.substring(0,12)}...</a><br>
+       Последна синхронизация: ${CLOUD.lastSync || 'Никога'}`
+    : 'Няма настроен Gist ID — при Upload ще се създаде нов.';
+}
+
+async function cloudUpload() {
+  if(!CLOUD.token) { toast('Въведи GitHub токен!','#7f1d1d'); return; }
+  updateCloudStatus('⬆️ Качвам към облака...', 'var(--T)');
+
+  const data = {
+    version:   'baccarat-v6-cloud',
+    timestamp: new Date().toISOString(),
+    history:   history,
+    interval:  interval,
+    markovT:   markovT,
+    sessions:  (()=>{try{return JSON.parse(localStorage.getItem('bac_sessions_v6')||'[]');}catch(e){return [];}})(),
+    shoeDB:    SHOE_DB.shoes,
+    wt8RC:     wt8RunningCount,
+    cardCounts: cardCounts,
+    brm: {
+      bankroll: BRM.bankroll,
+      startBankroll: BRM.startBankroll,
+      currentPnl: BRM.currentPnl,
+    }
+  };
+
+  const gistData = {
+    description: `Baccarat APT v6 — ${new Date().toLocaleString('bg')}`,
+    public: false,
+    files: {
+      'baccarat_apt_v6_sync.json': {
+        content: JSON.stringify(data, null, 2)
+      }
+    }
+  };
+
+  try {
+    let url    = 'https://api.github.com/gists';
+    let method = 'POST';
+    if(CLOUD.gistId) {
+      url    = `https://api.github.com/gists/${CLOUD.gistId}`;
+      method = 'PATCH';
+    }
+
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Authorization': `token ${CLOUD.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(gistData)
+    });
+
+    const result = await res.json();
+    if(result.id) {
+      CLOUD.gistId  = result.id;
+      CLOUD.lastSync= new Date().toLocaleTimeString('bg');
+      try { localStorage.setItem('cloud_gist_id', result.id); } catch(e){}
+      updateCloudStatus('✅ Качено успешно!', 'var(--P)');
+      updateCloudInfo();
+      toast('☁️ Данните са качени в облака!', '#166534');
+    } else {
+      throw new Error(result.message || 'Unknown error');
+    }
+  } catch(e) {
+    updateCloudStatus('❌ Грешка: ' + e.message, 'var(--red)');
+    toast('❌ ' + e.message, '#7f1d1d');
+  }
+}
+
+async function cloudDownload() {
+  if(!CLOUD.token)  { toast('Въведи GitHub токен!','#7f1d1d'); return; }
+  if(!CLOUD.gistId) { toast('Въведи Gist ID!','#7f1d1d'); return; }
+  updateCloudStatus('⬇️ Сваля от облака...', 'var(--T)');
+
+  try {
+    const res = await fetch(`https://api.github.com/gists/${CLOUD.gistId}`, {
+      headers: {'Authorization': `token ${CLOUD.token}`}
+    });
+    const gist   = await res.json();
+    const file   = gist.files?.['baccarat_apt_v6_sync.json'];
+    if(!file) throw new Error('Файлът не е намерен в Gist');
+
+    const data = JSON.parse(file.content);
+
+    // Restore data
+    if(data.history && data.history.length) {
+      doReset();
+      data.history.forEach(r => {
+        history.push(r);
+        if(prevR){if(!markovT[prevR])markovT[prevR]={P:0,B:0,T:0};markovT[prevR][r]=(markovT[prevR][r]||0)+1;}
+        prevR=r;
+      });
+      runCalibration();
+    }
+    if(data.sessions) {
+      try { localStorage.setItem('bac_sessions_v6', JSON.stringify(data.sessions)); } catch(e){}
+    }
+    if(data.shoeDB)    SHOE_DB.shoes = data.shoeDB;
+    if(data.cardCounts) {
+      RANKS.forEach(r => { if(data.cardCounts[r]!==undefined) cardCounts[r]=data.cardCounts[r]; });
+    }
+    if(data.wt8RC !== undefined) wt8RunningCount = data.wt8RC;
+    if(data.brm) {
+      BRM.bankroll      = data.brm.bankroll      || BRM.bankroll;
+      BRM.startBankroll = data.brm.startBankroll || BRM.startBankroll;
+      BRM.currentPnl    = data.brm.currentPnl    || 0;
+    }
+
+    CLOUD.lastSync = new Date().toLocaleTimeString('bg');
+    renderAll();
+    updateCloudStatus('✅ Данните са заредени!', 'var(--P)');
+    updateCloudInfo();
+    toast(`☁️ ${data.history?.length||0} ръце заредени от облака!`, '#166534');
+  } catch(e) {
+    updateCloudStatus('❌ Грешка: ' + e.message, 'var(--red)');
+    toast('❌ ' + e.message, '#7f1d1d');
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// ADVANCED STATISTICS
+// ════════════════════════════════════════════════════════════
+function calcAdvancedStats() {
+  const h  = history;
+  const n  = h.length;
+  if(n < 10) return null;
+
+  const nb = h.filter(x=>x!=='T');
+  const pc = nb.filter(x=>x==='P').length;
+  const bc = nb.filter(x=>x==='B').length;
+  const tc = h.filter(x=>x==='T').length;
+
+  // Basic stats
+  const pRate = pc / Math.max(nb.length,1);
+  const bRate = bc / Math.max(nb.length,1);
+  const tRate = tc / Math.max(n,1);
+
+  // Streak lengths
+  const streaks = [];
+  let cur=h[0], len=1;
+  for(let i=1;i<h.length;i++){
+    if(h[i]===cur&&cur!=='T') len++;
+    else { if(cur!=='T') streaks.push(len); cur=h[i]; len=1; }
+  }
+  if(cur!=='T') streaks.push(len);
+
+  const meanStreak = streaks.length ? streaks.reduce((a,b)=>a+b,0)/streaks.length : 0;
+  const varStreak  = streaks.length ? streaks.reduce((a,b)=>a+(b-meanStreak)**2,0)/streaks.length : 0;
+  const stdStreak  = Math.sqrt(varStreak);
+  const maxStreak  = streaks.length ? Math.max(...streaks) : 0;
+
+  // Alternation rate
+  let alt=0;
+  for(let i=1;i<nb.length;i++) if(nb[i]!==nb[i-1]) alt++;
+  const altRate = nb.length>1 ? alt/(nb.length-1) : 0.5;
+
+  // Confidence interval for P rate (Wilson score)
+  const z = 1.96; // 95%
+  const pHat = pRate;
+  const nNB  = nb.length;
+  const ciCenter = (pHat + z*z/(2*nNB)) / (1 + z*z/nNB);
+  const ciWidth  = z * Math.sqrt(pHat*(1-pHat)/nNB + z*z/(4*nNB*nNB)) / (1+z*z/nNB);
+  const ciLow    = Math.max(0, ciCenter - ciWidth);
+  const ciHigh   = Math.min(1, ciCenter + ciWidth);
+
+  // Chi-square test for randomness
+  const expected = {P: nb.length*0.5, B: nb.length*0.5};
+  const chiSq = (pc-expected.P)**2/expected.P + (bc-expected.B)**2/expected.B;
+  const pValue = chiSq > 3.84 ? '< 0.05 ⚠️' : '> 0.05 ✅';
+  const isRandom = chiSq <= 3.84;
+
+  // Runs test
+  let runs=1;
+  for(let i=1;i<nb.length;i++) if(nb[i]!==nb[i-1]) runs++;
+  const expectedRuns = (2*pc*bc/nNB)+1;
+  const runsStd = Math.sqrt((2*pc*bc*(2*pc*bc-nNB))/(nNB*nNB*(nNB-1)));
+  const runsZ   = runsStd > 0 ? (runs-expectedRuns)/runsStd : 0;
+  const runsRandom = Math.abs(runsZ) < 1.96;
+
+  // Entropy
+  const entropy = -(pRate>0?pRate*Math.log2(pRate):0) - (bRate>0?bRate*Math.log2(bRate):0);
+  const maxEntropy = 1.0; // for 2 outcomes
+
+  // Rolling win rate (last 10)
+  const rolling = [];
+  for(let i=9;i<nb.length;i++) {
+    const window = nb.slice(i-9,i+1);
+    rolling.push(window.filter(x=>x==='P').length/10);
+  }
+
+  return {
+    n, nb:nb.length, pc, bc, tc,
+    pRate, bRate, tRate,
+    meanStreak: meanStreak.toFixed(2),
+    stdStreak:  stdStreak.toFixed(2),
+    maxStreak,
+    altRate: (altRate*100).toFixed(1),
+    ciLow:   (ciLow*100).toFixed(1),
+    ciHigh:  (ciHigh*100).toFixed(1),
+    chiSq:   chiSq.toFixed(3),
+    pValue,
+    isRandom,
+    runs,
+    expectedRuns: expectedRuns.toFixed(1),
+    runsZ:        runsZ.toFixed(2),
+    runsRandom,
+    entropy:    (entropy/maxEntropy*100).toFixed(1),
+    rolling,
+    streaks,
+  };
+}
+
+function renderAdvStats() {
+  const box = document.getElementById('advstats-box');
+  if(!box) return;
+
+  const s = calcAdvancedStats();
+  if(!s) {
+    box.innerHTML = '<div style="color:var(--dim);font-size:11px;text-align:center;padding:20px">Нужни са ≥ 10 ръце за анализ...</div>';
+    return;
+  }
+
+  const pCol = s.pRate > 0.52 ? 'var(--P)' : s.pRate < 0.48 ? 'var(--red)' : 'var(--dim)';
+  const bCol = s.bRate > 0.52 ? 'var(--P)' : s.bRate < 0.48 ? 'var(--red)' : 'var(--dim)';
+
+  box.innerHTML = `
+    <!-- Basic Stats -->
+    <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700;
+                text-transform:uppercase">📊 Базова статистика</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:10px">
+      <div class="mc"><div class="v" style="color:var(--P)">${Math.round(s.pRate*100)}%</div><div class="l">Player %</div></div>
+      <div class="mc"><div class="v" style="color:var(--red)">${Math.round(s.bRate*100)}%</div><div class="l">Banker %</div></div>
+      <div class="mc"><div class="v" style="color:var(--T)">${Math.round(s.tRate*100)}%</div><div class="l">Tie %</div></div>
+    </div>
+
+    <!-- Confidence Interval -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700">
+        📐 Confidence Interval (95%) за Player %
+      </div>
+      <div style="text-align:center">
+        <span style="font-size:18px;font-weight:700;color:var(--gold)">
+          ${s.ciLow}% — ${s.ciHigh}%
+        </span>
+      </div>
+      <div style="height:8px;background:var(--bg2);border-radius:4px;margin:8px 0;position:relative">
+        <div style="position:absolute;left:50%;top:0;width:1px;height:100%;background:var(--dim)"></div>
+        <div style="position:absolute;left:${s.ciLow}%;width:${s.ciHigh-s.ciLow}%;
+                    height:100%;background:var(--gold);opacity:.4;border-radius:4px"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim)">
+        <span>40%</span><span>50% (равновесие)</span><span>60%</span>
+      </div>
+    </div>
+
+    <!-- Streak Stats -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700">
+        📈 Анализ на сериите
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+        <div style="text-align:center">
+          <div style="font-size:18px;font-weight:700;color:var(--gold)">${s.meanStreak}</div>
+          <div style="font-size:9px;color:var(--dim)">Средна серия</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:18px;font-weight:700;color:var(--T)">${s.stdStreak}</div>
+          <div style="font-size:9px;color:var(--dim)">Стд. отклонение</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:18px;font-weight:700;color:var(--red)">${s.maxStreak}</div>
+          <div style="font-size:9px;color:var(--dim)">Максимална</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chi-square test -->
+    <div style="background:${s.isRandom?'#0a2318':'#1a0606'};border:1px solid ${s.isRandom?'var(--P)':'var(--red)'};
+                border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700">
+        🎲 Chi-square тест за случайност
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:14px;font-weight:700;
+                      color:${s.isRandom?'var(--P)':'var(--red)'}">
+            ${s.isRandom?'✅ Случайна обувка':'⚠️ НЕСЛУЧАЙНА!'}
+          </div>
+          <div style="font-size:10px;color:var(--dim);margin-top:2px">
+            χ² = ${s.chiSq} · p ${s.pValue}
+          </div>
+        </div>
+        <div style="font-size:28px">${s.isRandom?'🎲':'⚡'}</div>
+      </div>
+    </div>
+
+    <!-- Runs test -->
+    <div style="background:${s.runsRandom?'#0a2318':'#1f1408'};border:1px solid ${s.runsRandom?'var(--P)':'var(--T)'};
+                border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700">
+        🏃 Runs тест (серии)
+      </div>
+      <div style="font-size:13px;font-weight:700;color:${s.runsRandom?'var(--P)':'var(--T)'}">
+        ${s.runsRandom?'✅ Нормален брой серии':'⚠️ Аномален брой серии'}
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin-top:4px">
+        Серии: ${s.runs} · Очаквани: ${s.expectedRuns} · Z=${s.runsZ}
+      </div>
+    </div>
+
+    <!-- Entropy -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700">
+        🌀 Ентропия (предвидимост)
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:24px;font-weight:700;color:var(--gold)">${s.entropy}%</div>
+        <div>
+          <div style="font-size:11px;color:${parseFloat(s.entropy)>80?'var(--dim)':'var(--P)'}">
+            ${parseFloat(s.entropy)>80?'Висока ентропия = по-трудно предсказуема':'Ниска ентропия = по-предсказуема'}
+          </div>
+          <div style="font-size:9px;color:var(--dim)">100% = перфектно случайна</div>
+        </div>
+      </div>
+      <div style="height:6px;background:var(--bg2);border-radius:3px;margin-top:6px;overflow:hidden">
+        <div style="height:100%;width:${s.entropy}%;background:var(--gold);border-radius:3px"></div>
+      </div>
+    </div>
+
+    <!-- Alternation rate -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700">
+        ⚡ Скорост на смяна (Alternation Rate)
+      </div>
+      <div style="text-align:center;font-size:22px;font-weight:700;
+                  color:${parseFloat(s.altRate)>60?'var(--B)':parseFloat(s.altRate)<40?'var(--red)':'var(--gold)'}">
+        ${s.altRate}%
+      </div>
+      <div style="font-size:10px;color:var(--dim);text-align:center;margin-top:4px">
+        ${parseFloat(s.altRate)>60?'CHOPPY обувка ⚡':parseFloat(s.altRate)<40?'STREAKY обувка 🔴':'BALANCED обувка ⚖️'}
+      </div>
+      <div style="height:8px;background:var(--bg2);border-radius:4px;margin-top:6px;overflow:hidden">
+        <div style="height:100%;width:${s.altRate}%;border-radius:4px;
+          background:${parseFloat(s.altRate)>60?'var(--B)':parseFloat(s.altRate)<40?'var(--red)':'var(--gold)'}">
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--dim);margin-top:2px">
+        <span>0% Streaky</span><span>50% Balanced</span><span>100% Choppy</span>
+      </div>
+    </div>
+
+    <!-- Summary card -->
+    <div style="background:var(--bg3);border:1px solid var(--gold);border-radius:10px;padding:12px">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:8px;font-weight:700">
+        🎯 ОБОБЩЕН АНАЛИЗ
+      </div>
+      <div style="font-size:11px;line-height:1.8;color:var(--text)">
+        • Обувката е <strong style="color:${s.isRandom?'var(--P)':'var(--T)'}">${s.isRandom?'статистически случайна':'НЕСТАНДАРТНА'}</strong><br>
+        • Player спечелва в ${Math.round(s.pRate*100)}% от ръцете (CI: ${s.ciLow}%-${s.ciHigh}%)<br>
+        • Средна серия: ${s.meanStreak} ± ${s.stdStreak} ръце<br>
+        • Тип обувка: <strong style="color:var(--gold)">${parseFloat(s.altRate)>60?'CHOPPY':parseFloat(s.altRate)<40?'STREAKY':'BALANCED'}</strong>
+      </div>
+    </div>
+  `;
+}
+
 </script>
 </head>
 <body>
@@ -580,6 +1139,9 @@ if('serviceWorker' in navigator) {
   <button class="tab-btn" onclick="switchAdvTab('ai',this)">🤖 AI</button>
   <button class="tab-btn" onclick="switchAdvTab('shoecomp',this)">📊 Сравни</button>
   <button class="tab-btn" onclick="switchAdvTab('hotcold',this)">🔥 Hot/Cold</button>
+  <button class="tab-btn" onclick="switchAdvTab('ocr',this)">📸 OCR</button>
+  <button class="tab-btn" onclick="switchAdvTab('cloud',this)">☁️ Sync</button>
+  <button class="tab-btn" onclick="switchAdvTab('advstats',this)">📈 Stats+</button>
   <button class="tab-btn" onclick="switchAdvTab('backtest',this)">📈 Backtest</button>
 </div>
 <div class="tab-content">
@@ -674,6 +1236,179 @@ if('serviceWorker' in navigator) {
   <div class="tab-panel" id="tab-sidebet">
     <div id="sidebet-box">
       <div style="color:var(--dim);font-size:11px">Зареждане...</div>
+    </div>
+  </div>
+
+
+  <!-- OCR Tab -->
+  <div class="tab-panel" id="tab-ocr">
+    <div style="font-size:11px;color:var(--dim);margin-bottom:10px;line-height:1.6">
+      📸 <strong style="color:var(--gold)">OCR от снимка</strong> — Powered by Claude Vision.<br>
+      Снимай Bead Plate на WinBet → системата разпознава автоматично.
+    </div>
+
+    <!-- API Key -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:4px;font-weight:700">
+        🔑 Anthropic API Key
+        <a href="https://console.anthropic.com/keys" target="_blank"
+           style="color:var(--B);margin-left:6px;font-size:9px">Вземи тук →</a>
+      </div>
+      <input type="password" id="ocr-api-key"
+        placeholder="sk-ant-..."
+        style="width:100%;background:var(--bg2);border:1px solid var(--border);
+               border-radius:6px;padding:8px;color:#fff;font-size:12px;margin-bottom:6px">
+      <button onclick="saveOCRKey()"
+        style="width:100%;background:var(--bg2);border:1px solid var(--border);
+               border-radius:6px;padding:7px;color:var(--gold);font-size:11px;cursor:pointer">
+        💾 Запази ключа локално
+      </button>
+    </div>
+
+    <!-- Camera / Upload -->
+    <div style="margin-bottom:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <label for="ocr-camera"
+          style="background:#14532d;border:2px solid var(--P);border-radius:10px;
+                 padding:16px 8px;text-align:center;cursor:pointer;font-size:13px;
+                 font-weight:700;color:var(--P)">
+          📷 Снимай
+          <input type="file" id="ocr-camera" accept="image/*" capture="environment"
+            style="display:none" onchange="handleOCRImage(event)">
+        </label>
+        <label for="ocr-upload"
+          style="background:#1e3a8a;border:2px solid var(--B);border-radius:10px;
+                 padding:16px 8px;text-align:center;cursor:pointer;font-size:13px;
+                 font-weight:700;color:var(--B)">
+          🖼️ Качи снимка
+          <input type="file" id="ocr-upload" accept="image/*"
+            style="display:none" onchange="handleOCRImage(event)">
+        </label>
+      </div>
+
+      <!-- Preview -->
+      <div id="ocr-preview" style="display:none;margin-bottom:10px">
+        <img id="ocr-img" style="width:100%;border-radius:8px;max-height:200px;object-fit:cover">
+        <button onclick="analyzeOCR()"
+          style="width:100%;margin-top:8px;background:var(--gold);border:none;
+                 border-radius:8px;padding:12px;color:#000;font-weight:700;
+                 font-size:14px;cursor:pointer">
+          🔍 Анализирай с Claude AI
+        </button>
+      </div>
+    </div>
+
+    <!-- OCR Status -->
+    <div id="ocr-status" style="display:none;background:var(--bg3);border-radius:8px;
+         padding:10px;margin-bottom:10px;font-size:12px;text-align:center;
+         color:var(--gold)">
+      🤖 Claude анализира снимката...
+    </div>
+
+    <!-- OCR Results -->
+    <div id="ocr-results" style="display:none">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700;
+                  text-transform:uppercase">Разпознати резултати</div>
+      <div id="ocr-chips" style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:10px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button onclick="loadOCRResults()"
+          style="background:#14532d;border:1px solid var(--P);border-radius:8px;
+                 padding:10px;color:var(--P);font-weight:700;cursor:pointer;font-size:12px">
+          ✅ Зареди в системата
+        </button>
+        <button onclick="clearOCR()"
+          style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+                 padding:10px;color:var(--dim);cursor:pointer;font-size:12px">
+          🗑 Изчисти
+        </button>
+      </div>
+      <div id="ocr-note" style="margin-top:8px;font-size:10px;color:var(--dim);line-height:1.6"></div>
+    </div>
+
+    <!-- Instructions -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-top:10px">
+      <div style="font-size:10px;color:var(--dim);font-weight:700;margin-bottom:6px">
+        📋 КАК ДА СНИМАМ
+      </div>
+      <div style="font-size:10px;color:var(--dim);line-height:1.8">
+        1. Отвори WinBet Speed Baccarat-A<br>
+        2. Намери Bead Plate (мрежата с резултатите)<br>
+        3. Снимай директно или качи снимка<br>
+        4. Claude разпознава P/B/T автоматично<br>
+        5. Натисни "Зареди" → данните влизат в системата
+      </div>
+    </div>
+  </div>
+
+  <!-- Cloud Sync Tab -->
+  <div class="tab-panel" id="tab-cloud">
+    <div style="font-size:11px;color:var(--dim);margin-bottom:10px;line-height:1.6">
+      ☁️ <strong style="color:var(--gold)">Cloud Sync</strong> — синхронизация чрез GitHub Gist.<br>
+      Влизай от телефон и компютър с един токен.
+    </div>
+
+    <!-- Token input -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;font-weight:700">
+        🔑 GitHub Token (веднъж)
+      </div>
+      <input type="password" id="cloud-token"
+        placeholder="ghp_... (Personal Access Token с gist права)"
+        style="width:100%;background:var(--bg2);border:1px solid var(--border);
+               border-radius:6px;padding:8px;color:#fff;font-size:12px;margin-bottom:6px">
+      <input type="text" id="cloud-gist-id"
+        placeholder="Gist ID (оставете празно за нов)"
+        style="width:100%;background:var(--bg2);border:1px solid var(--border);
+               border-radius:6px;padding:8px;color:#fff;font-size:12px;margin-bottom:8px">
+      <button onclick="saveCloudSettings()"
+        style="width:100%;background:var(--bg2);border:1px solid var(--border);
+               border-radius:6px;padding:8px;color:var(--gold);font-size:11px;cursor:pointer">
+        💾 Запази токена локално
+      </button>
+    </div>
+
+    <!-- Sync buttons -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <button onclick="cloudUpload()"
+        style="background:#0a2318;border:2px solid var(--P);border-radius:10px;
+               padding:14px 8px;font-size:13px;font-weight:700;color:var(--P);cursor:pointer">
+        ⬆️ Upload<br><span style="font-size:10px;opacity:.7">Качи към облака</span>
+      </button>
+      <button onclick="cloudDownload()"
+        style="background:#0c1f3a;border:2px solid var(--B);border-radius:10px;
+               padding:14px 8px;font-size:13px;font-weight:700;color:var(--B);cursor:pointer">
+        ⬇️ Download<br><span style="font-size:10px;opacity:.7">Свали от облака</span>
+      </button>
+    </div>
+
+    <!-- Status -->
+    <div id="cloud-status" style="background:var(--bg3);border-radius:8px;
+         padding:10px;margin-bottom:10px;font-size:12px;color:var(--dim);text-align:center">
+      Готов за синхронизация
+    </div>
+
+    <!-- Last sync info -->
+    <div id="cloud-info" style="font-size:10px;color:var(--dim);line-height:1.8"></div>
+
+    <!-- Instructions -->
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-top:10px">
+      <div style="font-size:10px;color:var(--dim);font-weight:700;margin-bottom:6px">
+        📋 НАСТРОЙКА
+      </div>
+      <div style="font-size:10px;color:var(--dim);line-height:1.8">
+        1. github.com/settings/tokens<br>
+        2. Generate new token (classic)<br>
+        3. ✅ gist (само това е нужно)<br>
+        4. Постави токена горе<br>
+        5. Upload от телефон → Download на компютър
+      </div>
+    </div>
+  </div>
+
+  <!-- Advanced Statistics Tab -->
+  <div class="tab-panel" id="tab-advstats">
+    <div id="advstats-box">
+      <div style="color:var(--dim);font-size:11px">Нужни са ≥ 10 ръце...</div>
     </div>
   </div>
 
@@ -1069,6 +1804,7 @@ function renderAll() {
   try{renderPatterns();}catch(e){}
   try{renderShoeCompare();}catch(e){}
   try{renderHotCold();}catch(e){}
+  try{renderAdvStats();}catch(e){}
 }
 
 function renderMetrics() {
@@ -1358,6 +2094,9 @@ function switchAdvTab(name, el) {
   if(name==='ai')       renderAI();
   if(name==='shoecomp') renderShoeCompare();
   if(name==='hotcold')  renderHotCold();
+  if(name==='ocr')      renderOCR();
+  if(name==='cloud')    renderCloud();
+  if(name==='advstats') renderAdvStats();
   if(name==='backtest') renderBacktest();
 }
 
@@ -1903,6 +2642,7 @@ setTimeout(() => {
   try{renderPatterns();}catch(e){}
   try{renderShoeCompare();}catch(e){}
   try{renderHotCold();}catch(e){}
+  try{renderAdvStats();}catch(e){}
   try{renderHeatmap();}catch(e){}
 }, 100);
 
